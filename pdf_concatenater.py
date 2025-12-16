@@ -11,9 +11,18 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QLabel,
+    QFrame,
 )
 from PySide6.QtCore import Qt, QPoint
 from pypdf import PdfReader, PdfWriter
+
+
+class DropIndicator(QFrame):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setFixedHeight(3)
+        self.setStyleSheet("background-color: #0078d7;")
+        self.hide()
 
 
 class PdfRow(QWidget):
@@ -26,18 +35,15 @@ class PdfRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        # ===== 通し番号（ドラッグハンドル）=====
         self.index_label = QLabel("1")
         self.index_label.setFixedWidth(32)
         self.index_label.setAlignment(Qt.AlignCenter)
         self.index_label.setCursor(Qt.OpenHandCursor)
 
-        # ===== パス入力 =====
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("PDF ファイルパス")
         self.path_edit.editingFinished.connect(self.update_pages)
 
-        # ===== ページ数 =====
         self.page_label = QLabel("- p")
         self.page_label.setFixedWidth(50)
         self.page_label.setAlignment(Qt.AlignCenter)
@@ -62,7 +68,6 @@ class PdfRow(QWidget):
         layout.addWidget(down_btn)
         layout.addWidget(delete_btn)
 
-        # DnDイベント
         self.index_label.mousePressEvent = self.drag_start
         self.index_label.mouseMoveEvent = self.drag_move
         self.index_label.mouseReleaseEvent = self.drag_end
@@ -71,21 +76,20 @@ class PdfRow(QWidget):
     def drag_start(self, event):
         if event.button() == Qt.LeftButton:
             self._drag_start_pos = event.globalPosition().toPoint()
+            self.setWindowOpacity(0.5)
             self.index_label.setCursor(Qt.ClosedHandCursor)
 
     def drag_move(self, event):
         if not self._drag_start_pos:
             return
 
-        delta = event.globalPosition().toPoint() - self._drag_start_pos
-        if abs(delta.y()) > 25:
-            direction = -1 if delta.y() < 0 else 1
-            self.app.move_row(self, direction)
-            self._drag_start_pos = event.globalPosition().toPoint()
+        self.app.update_drop_indicator(event.globalPosition().toPoint())
 
     def drag_end(self, event):
-        self._drag_start_pos = None
+        self.setWindowOpacity(1.0)
         self.index_label.setCursor(Qt.OpenHandCursor)
+        self._drag_start_pos = None
+        self.app.apply_drop(self)
 
     # ---------- PDF ----------
     def browse(self):
@@ -117,19 +121,17 @@ class PdfMergerApp(QWidget):
         self.resize(1000, 600)
 
         self.rows: list[PdfRow] = []
+        self.drop_target_index: int | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
         outer.setSpacing(12)
 
-        # ===== ガイダンス =====
         guide = QLabel(
             "PDFを追加し、番号をドラッグまたは ↑↓ ボタンで順序を変更してください。"
         )
-        guide.setAlignment(Qt.AlignLeft)
         outer.addWidget(guide)
 
-        # ===== スクロールエリア =====
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
 
@@ -138,36 +140,34 @@ class PdfMergerApp(QWidget):
         self.rows_layout.setAlignment(Qt.AlignTop)
         self.rows_layout.setSpacing(6)
 
+        self.drop_indicator = DropIndicator(self.rows_container)
+        self.rows_layout.addWidget(self.drop_indicator)
+
         scroll.setWidget(self.rows_container)
         outer.addWidget(scroll, stretch=1)
 
-        # ===== PDF追加 =====
         add_btn = QPushButton("＋ PDF追加")
         add_btn.clicked.connect(self.add_row)
         outer.addWidget(add_btn)
 
-        # ===== 集計表示 =====
         self.summary_label = QLabel("PDF数: 0 / 総ページ数: 0")
         outer.addWidget(self.summary_label)
 
-        # ===== 出力名 =====
+        # ===== 出力先 =====
+        out_dir_layout = QHBoxLayout()
+        self.output_dir = QLineEdit(os.getcwd())
+        browse_dir = QPushButton("参照")
+        browse_dir.clicked.connect(self.select_output_dir)
+        out_dir_layout.addWidget(self.output_dir, stretch=1)
+        out_dir_layout.addWidget(browse_dir)
+        outer.addLayout(out_dir_layout)
+
         self.output_name = QLineEdit("merged.pdf")
-        self.output_name.setPlaceholderText("出力PDFファイル名")
         outer.addWidget(self.output_name)
 
-        # ===== 統合ボタン =====
         merge_btn = QPushButton("PDFを統合")
         merge_btn.clicked.connect(self.merge_pdfs)
         outer.addWidget(merge_btn)
-
-        self.setStyleSheet(
-            """
-            QWidget { font-size: 14px; }
-            QLineEdit { padding: 6px; }
-            QPushButton { padding: 8px; }
-            QLabel { font-weight: bold; }
-            """
-        )
 
         self.add_row()
 
@@ -177,13 +177,13 @@ class PdfMergerApp(QWidget):
         self.rows.append(row)
         self.rebuild_rows()
 
-    def delete_row(self, row: PdfRow):
+    def delete_row(self, row):
         if row in self.rows:
             self.rows.remove(row)
             row.setParent(None)
             self.rebuild_rows()
 
-    def move_row(self, row: PdfRow, direction: int):
+    def move_row(self, row, direction):
         idx = self.rows.index(row)
         new_idx = idx + direction
         if 0 <= new_idx < len(self.rows):
@@ -196,11 +196,44 @@ class PdfMergerApp(QWidget):
             if item.widget():
                 item.widget().setParent(None)
 
-        for i, row in enumerate(self.rows, start=1):
-            row.set_index(i)
+        for i, row in enumerate(self.rows):
+            row.set_index(i + 1)
             self.rows_layout.addWidget(row)
 
+        self.rows_layout.addWidget(self.drop_indicator)
         self.update_summary()
+
+    # ---------- DnD 補助 ----------
+    def update_drop_indicator(self, global_pos: QPoint):
+        y = self.rows_container.mapFromGlobal(global_pos).y()
+        index = 0
+
+        for i, row in enumerate(self.rows):
+            if y < row.y() + row.height() // 2:
+                index = i
+                break
+        else:
+            index = len(self.rows)
+
+        self.drop_target_index = index
+        self.rows_layout.insertWidget(index, self.drop_indicator)
+        self.drop_indicator.show()
+
+    def apply_drop(self, row: PdfRow):
+        self.drop_indicator.hide()
+        if self.drop_target_index is None:
+            return
+
+        old = self.rows.index(row)
+        new = self.drop_target_index
+
+        if new > old:
+            new -= 1
+
+        self.rows.pop(old)
+        self.rows.insert(new, row)
+        self.drop_target_index = None
+        self.rebuild_rows()
 
     # ---------- 集計 ----------
     def update_summary(self):
@@ -216,23 +249,29 @@ class PdfMergerApp(QWidget):
             f"PDF数: {len(self.rows)} / 総ページ数: {total_pages}"
         )
 
-    # ---------- PDF 統合 ----------
+    # ---------- 出力 ----------
+    def select_output_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "出力先ディレクトリ選択")
+        if d:
+            self.output_dir.setText(d)
+
     def merge_pdfs(self):
         paths = [r.path() for r in self.rows if r.path()]
         if not paths:
             QMessageBox.critical(self, "エラー", "PDFが指定されていません")
             return
 
-        output = self.output_name.text().strip()
-        if not output.endswith(".pdf"):
-            output += ".pdf"
+        out_dir = self.output_dir.text().strip()
+        name = self.output_name.text().strip()
+        if not name.endswith(".pdf"):
+            name += ".pdf"
+
+        output = os.path.join(out_dir, name)
 
         writer = PdfWriter()
 
         try:
             for path in paths:
-                if not os.path.exists(path):
-                    raise FileNotFoundError(path)
                 reader = PdfReader(path)
                 for page in reader.pages:
                     writer.add_page(page)
