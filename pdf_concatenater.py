@@ -50,7 +50,7 @@ class PdfRow(QWidget):
         self.path_edit.setPlaceholderText("PDF ファイルパス")
         self.path_edit.editingFinished.connect(self.update_info)
 
-        self.info_label = QLabel("- P / file size: -")
+        self.info_label = QLabel("- page(s) / file size: -")
         self.info_label.setFixedWidth(180)
         self.info_label.setAlignment(Qt.AlignCenter)
 
