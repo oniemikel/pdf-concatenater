@@ -17,6 +17,10 @@ from PySide6.QtCore import Qt, QPoint
 from pypdf import PdfReader, PdfWriter
 
 
+def bytes_to_mb(size: int) -> float:
+    return size / (1024 * 1024)
+
+
 class DropIndicator(QFrame):
     def __init__(self, parent):
         super().__init__(parent)
@@ -30,6 +34,8 @@ class PdfRow(QWidget):
         super().__init__()
         self.app = app
         self._drag_start_pos: QPoint | None = None
+        self.page_count: int | None = None
+        self.file_size: int | None = None
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -42,11 +48,11 @@ class PdfRow(QWidget):
 
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("PDF ファイルパス")
-        self.path_edit.editingFinished.connect(self.update_pages)
+        self.path_edit.editingFinished.connect(self.update_info)
 
-        self.page_label = QLabel("- p")
-        self.page_label.setFixedWidth(50)
-        self.page_label.setAlignment(Qt.AlignCenter)
+        self.info_label = QLabel("- P / file size: -")
+        self.info_label.setFixedWidth(180)
+        self.info_label.setAlignment(Qt.AlignCenter)
 
         browse_btn = QPushButton("参照")
         browse_btn.clicked.connect(self.browse)
@@ -62,7 +68,7 @@ class PdfRow(QWidget):
 
         layout.addWidget(self.index_label)
         layout.addWidget(self.path_edit, stretch=1)
-        layout.addWidget(self.page_label)
+        layout.addWidget(self.info_label)
         layout.addWidget(browse_btn)
         layout.addWidget(up_btn)
         layout.addWidget(down_btn)
@@ -80,10 +86,8 @@ class PdfRow(QWidget):
             self.index_label.setCursor(Qt.ClosedHandCursor)
 
     def drag_move(self, event):
-        if not self._drag_start_pos:
-            return
-
-        self.app.update_drop_indicator(event.globalPosition().toPoint())
+        if self._drag_start_pos:
+            self.app.update_drop_indicator(event.globalPosition().toPoint())
 
     def drag_end(self, event):
         self.setWindowOpacity(1.0)
@@ -96,14 +100,29 @@ class PdfRow(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "PDF選択", "", "PDF Files (*.pdf)")
         if path:
             self.path_edit.setText(path)
-            self.update_pages()
+            self.update_info()
 
-    def update_pages(self):
+    def update_info(self):
+        self.page_count = None
+        self.file_size = None
+
+        path = self.path()
+        if not path or not os.path.exists(path):
+            self.info_label.setText("- P / file size: -")
+            self.app.update_summary()
+            return
+
         try:
-            reader = PdfReader(self.path())
-            self.page_label.setText(f"{len(reader.pages)} p")
+            reader = PdfReader(path)
+            self.page_count = len(reader.pages)
+            self.file_size = os.path.getsize(path)
+
+            self.info_label.setText(
+                f"{self.page_count} P / file size: {bytes_to_mb(self.file_size):.2f} MB"
+            )
         except Exception:
-            self.page_label.setText("- p")
+            self.info_label.setText("- P / file size: -")
+
         self.app.update_summary()
 
     def path(self) -> str:
@@ -150,10 +169,9 @@ class PdfMergerApp(QWidget):
         add_btn.clicked.connect(self.add_row)
         outer.addWidget(add_btn)
 
-        self.summary_label = QLabel("PDF数: 0 / 総ページ数: 0")
+        self.summary_label = QLabel("PDF数：0 / ページ数：0 P / 推定ファイルサイズ：-")
         outer.addWidget(self.summary_label)
 
-        # ===== 出力先 =====
         out_dir_layout = QHBoxLayout()
         self.output_dir = QLineEdit(os.getcwd())
         browse_dir = QPushButton("参照")
@@ -206,14 +224,12 @@ class PdfMergerApp(QWidget):
     # ---------- DnD 補助 ----------
     def update_drop_indicator(self, global_pos: QPoint):
         y = self.rows_container.mapFromGlobal(global_pos).y()
-        index = 0
+        index = len(self.rows)
 
         for i, row in enumerate(self.rows):
             if y < row.y() + row.height() // 2:
                 index = i
                 break
-        else:
-            index = len(self.rows)
 
         self.drop_target_index = index
         self.rows_layout.insertWidget(index, self.drop_indicator)
@@ -226,7 +242,6 @@ class PdfMergerApp(QWidget):
 
         old = self.rows.index(row)
         new = self.drop_target_index
-
         if new > old:
             new -= 1
 
@@ -237,16 +252,22 @@ class PdfMergerApp(QWidget):
 
     # ---------- 集計 ----------
     def update_summary(self):
+        pdf_count = 0
         total_pages = 0
+        total_size = 0
+
         for r in self.rows:
-            try:
-                reader = PdfReader(r.path())
-                total_pages += len(reader.pages)
-            except Exception:
-                pass
+            if r.page_count is not None:
+                pdf_count += 1
+                total_pages += r.page_count
+                total_size += r.file_size or 0
+
+        size_text = (
+            f"{bytes_to_mb(total_size):.2f} MB（推定）" if pdf_count > 0 else "-"
+        )
 
         self.summary_label.setText(
-            f"PDF数: {len(self.rows)} / 総ページ数: {total_pages}"
+            f"PDF数：{pdf_count} / ページ数：{total_pages} P / 推定ファイルサイズ：{size_text}"
         )
 
     # ---------- 出力 ----------
@@ -256,7 +277,7 @@ class PdfMergerApp(QWidget):
             self.output_dir.setText(d)
 
     def merge_pdfs(self):
-        paths = [r.path() for r in self.rows if r.path()]
+        paths = [r.path() for r in self.rows if r.page_count is not None]
         if not paths:
             QMessageBox.critical(self, "エラー", "PDFが指定されていません")
             return
@@ -267,7 +288,6 @@ class PdfMergerApp(QWidget):
             name += ".pdf"
 
         output = os.path.join(out_dir, name)
-
         writer = PdfWriter()
 
         try:
