@@ -50,7 +50,7 @@ class PdfRow(QWidget):
         self.path_edit.setPlaceholderText("PDF ファイルパス")
         self.path_edit.editingFinished.connect(self.update_info)
 
-        self.info_label = QLabel("- page(s) / file size: -")
+        self.info_label = QLabel("- page(s) / - MB")
         self.info_label.setFixedWidth(180)
         self.info_label.setAlignment(Qt.AlignCenter)
 
@@ -108,7 +108,7 @@ class PdfRow(QWidget):
 
         path = self.path()
         if not path or not os.path.exists(path):
-            self.info_label.setText("- page(s) / file size: -")
+            self.info_label.setText("- page(s) / - MB")
             self.app.update_summary()
             return
 
@@ -118,10 +118,10 @@ class PdfRow(QWidget):
             self.file_size = os.path.getsize(path)
 
             self.info_label.setText(
-                f"{self.page_count} page(s) / file size: {bytes_to_mb(self.file_size):.2f} MB"
+                f"{self.page_count} page(s) / {bytes_to_mb(self.file_size):.2f} MB"
             )
         except Exception:
-            self.info_label.setText("- page(s) / file size: -")
+            self.info_label.setText("- page(s) / -")
 
         self.app.update_summary()
 
