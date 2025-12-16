@@ -108,7 +108,7 @@ class PdfRow(QWidget):
 
         path = self.path()
         if not path or not os.path.exists(path):
-            self.info_label.setText("- P / file size: -")
+            self.info_label.setText("- page(s) / file size: -")
             self.app.update_summary()
             return
 
@@ -118,10 +118,10 @@ class PdfRow(QWidget):
             self.file_size = os.path.getsize(path)
 
             self.info_label.setText(
-                f"{self.page_count} P / file size: {bytes_to_mb(self.file_size):.2f} MB"
+                f"{self.page_count} page(s) / file size: {bytes_to_mb(self.file_size):.2f} MB"
             )
         except Exception:
-            self.info_label.setText("- P / file size: -")
+            self.info_label.setText("- page(s) / file size: -")
 
         self.app.update_summary()
 
@@ -169,7 +169,7 @@ class PdfMergerApp(QWidget):
         add_btn.clicked.connect(self.add_row)
         outer.addWidget(add_btn)
 
-        self.summary_label = QLabel("PDF数：0 / ページ数：0 P / 推定ファイルサイズ：-")
+        self.summary_label = QLabel("PDF数：0 / ページ数：0 / 推定ファイルサイズ：-")
         outer.addWidget(self.summary_label)
 
         out_dir_layout = QHBoxLayout()
@@ -267,7 +267,7 @@ class PdfMergerApp(QWidget):
         )
 
         self.summary_label.setText(
-            f"PDF数：{pdf_count} / ページ数：{total_pages} P / 推定ファイルサイズ：{size_text}"
+            f"PDF数：{pdf_count} / ページ数：{total_pages} / 推定ファイルサイズ：{size_text}"
         )
 
     # ---------- 出力 ----------
